@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@notionhq/client": "^0.4.13",
+    "cron": "^1.8.2",
     "dotenv": "^16.0.0",
     "jira-client": "^8.0.0"
   },

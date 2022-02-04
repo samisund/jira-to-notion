@@ -1,5 +1,9 @@
+import { CronJob } from 'cron';
 import JiraApi from 'jira-client';
-import { Client, APIErrorCode } from "@notionhq/client"
+import {
+  Client,
+  APIErrorCode
+} from "@notionhq/client"
 import 'dotenv/config'
 
 const jira = new JiraApi({
@@ -15,79 +19,107 @@ const notion = new Client({
   auth: process.env.NOTION_TOKEN
 })
 
-jira.searchJira('assignee = 5cac3bf9c0b5612798e25d79 AND status not in (Closed, DONE, Resolved) AND project not in (ASSET, TEMPLATES)')
-  .then(response => {
-    const issuesToBeSearched = response.issues.map(issue => {
-      //console.log(JSON.stringify(issue, null, 2))
-      return {
-        key: issue.key,
-        summary: issue.fields.summary,
-        description: issue.fields.description
-      }
-    })
-    //console.log(JSON.stringify(issuesToBeSearched, null, 2))
+const job = new CronJob(`${process.env.CRON_TIMING}`, function() {
 
-    notion.databases.query({
-      database_id: process.env.NOTION_DB,
-      filter: {
-        or: issuesToBeSearched.map(issue => {
-          return {
-            property: "jira_issue",
-            text: {
-              equals: issue.key
+  // Write here your own JQL to get issues that you want.
+  jira.searchJira(`${process.env.JIRA_JQL}`)
+    .then(response => {
+      const issuesToBeSearched = response.issues.map(issue => {
+        //console.log(JSON.stringify(issue, null, 2))
+        // MAP properties ready for Notion create page
+        return {
+          "parent": {
+            "database_id": process.env.NOTION_DB,
+          },
+          "properties": {
+            "Task": {
+              "title": [{
+                "text": {
+                  "content": issue.fields.summary,
+                },
+              }, ],
+            },
+            "Status": {
+              "select": {
+                "name": "Not started"
+              }
+            },
+            "jira_issue": {
+              "rich_text": [{
+                "text": {
+                  "content": issue.key,
+                },
+              }, ],
+            },
+            "URL": {
+              "url": `https://${process.env.JIRA_HOST}/browse/${issue.key}`
+            },
+            "Due date": {
+              "date": {
+                "start": issue.fields.duedate
+              }
+            },
+            "Owner": {
+              "people": [{
+                "object": "user",
+                "id": "e73f2585-0aea-431c-a3a6-c61eeedebab6"
+              }]
             }
-          }
-        })
-      },
-    })
-      .then(response => {
+          },
+        }
 
-        const existingIssues = response.results.map(task => task.properties.jira_issue.rich_text[0].plain_text)
-        //console.log(`Looked: ${issuesToBeSearched.map(issue => issue.key)}`)
-        //console.log(`Found: ${existingIssues}`);
-
-        const newIssues = issuesToBeSearched.filter(issue => existingIssues.indexOf(issue.key) === -1)
-        console.log(`To be created: ${newIssues.map(issue => issue.key)}`);
-
-        newIssues.forEach((issue) => {
-          notion.pages.create({
-            parent: {
-              database_id: process.env.NOTION_DB,
-            },
-            properties: {
-              Task: {
-                title: [
-                  {
-                    text: {
-                      content: issue.summary,
-                    },
-                  },
-                ],
-              },
-              jira_issue: {
-                rich_text: [
-                  {
-                    text: {
-                      content: issue.key,
-                    },
-                  },
-                ],
-              },
-            },
-          })
-            .then(
-              console.log(`Created: ${issue.key}`)
-            )
-            .catch(err => {
-              console.error(err);
-            });
-        });
-      })
-      .catch(err => {
-        console.error(err);
       });
+      //console.log(JSON.stringify(issuesToBeSearched, null, 2));
 
-  })
-  .catch(err => {
-    console.error(err);
-  });
+      // Try to find issues from your Notion DB
+      notion.databases.query({
+          database_id: process.env.NOTION_DB,
+          filter: {
+            or: issuesToBeSearched.map(issue => {
+              return {
+                property: "jira_issue",
+                text: {
+                  equals: issue.properties.jira_issue.rich_text[0].text.content
+                }
+              }
+            })
+          },
+        })
+        .then(response => {
+
+          const existingIssues = response.results.map(task => task.properties.jira_issue.rich_text[0].plain_text).sort();
+          //console.log(`Looked: ${issuesToBeSearched.map(issue => issue.properties.jira_issue.rich_text[0].text.content).sort()}`)
+          //console.log(`Found: ${existingIssues}`);
+
+          const newIssues = issuesToBeSearched.filter(issue => existingIssues.indexOf(issue.properties.jira_issue.rich_text[0].text.content) === -1);
+
+          if(newIssues.length > 0) {
+            console.log(`New tasks (${newIssues.length} items): ${newIssues.map(issue => issue.properties.jira_issue.rich_text[0].text.content).sort()}`);
+          } else {
+            console.log(`No new tasks.`);
+          }
+
+          // For every new issue make create request.
+          newIssues.forEach((issue) => {
+            notion.pages.create(issue)
+              .then(
+                console.log(`Created: ${issue.properties.jira_issue.rich_text[0].text.content}`)
+              )
+              .catch(err => {
+                console.error(err);
+              });
+          });
+        })
+        .catch(err => {
+          console.error(err);
+        });
+
+    })
+    .catch(err => {
+      console.error(err);
+    });
+
+
+}, null, true, 'Europe/Helsinki');
+
+job.start();
