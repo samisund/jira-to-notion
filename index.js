@@ -27,7 +27,7 @@ const job = new CronJob(`${process.env.CRON_TIMING}`, function() {
       const issuesToBeSearched = response.issues.map(issue => {
         //console.log(JSON.stringify(issue, null, 2))
         // MAP properties ready for Notion create page
-        return {
+        const notionPageObject = {
           "parent": {
             "database_id": process.env.NOTION_DB,
           },
@@ -54,11 +54,7 @@ const job = new CronJob(`${process.env.CRON_TIMING}`, function() {
             "URL": {
               "url": `https://${process.env.JIRA_HOST}/browse/${issue.key}`
             },
-            "Due date": {
-              "date": {
-                "start": issue.fields.duedate
-              }
-            },
+
             "Owner": {
               "people": [{
                 "object": "user",
@@ -67,6 +63,18 @@ const job = new CronJob(`${process.env.CRON_TIMING}`, function() {
             }
           },
         }
+
+        // If task has duedate, add it to the page object also!
+        if(typeof issue.fields.duedate !== 'undefined' && issue.fields.duedate ) {
+          notionPageObject.properties["Due date"] = {
+            "date": {
+              "start": issue.fields.duedate
+            }
+          };
+        }
+
+        // Return formatted page object
+        return notionPageObject;
 
       });
       //console.log(JSON.stringify(issuesToBeSearched, null, 2));
